@@ -1,0 +1,162 @@
+import sys
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QVBoxLayout, QWidget, QPushButton,
+    QLineEdit, QMessageBox, QDialog, QLabel, QListWidget, QFileDialog
+)
+import sqlite3
+
+class Hotel:
+    def __init__(self, db_name="hotel.db"):
+        self.db_name = db_name
+        self.connection = sqlite3.connect(db_name)
+        self.cursor = self.connection.cursor()
+        self.create_table()
+
+    def create_table(self):
+        self.cursor.execute(''' 
+        CREATE TABLE IF NOT EXISTS rooms (
+            id INTEGER PRIMARY KEY,
+            price REAL NOT NULL,
+            discount REAL NOT NULL
+        )
+        ''')
+        self.connection.commit()
+
+    def add_room(self, room_id, price, discount):
+        if not (0 <= discount <= 100):
+            raise ValueError("Скидка должна быть от 0 до 100%.")
+        try:
+            self.cursor.execute('INSERT INTO rooms (id, price, discount) VALUES (?, ?, ?)', (room_id, price, discount))
+            self.connection.commit()
+        except sqlite3.IntegrityError:
+            raise ValueError("Комната с таким ID уже существует.")
+
+    def calculate_average_cost(self):
+        self.cursor.execute('SELECT AVG(price * (1 - discount / 100)) FROM rooms')
+        result = self.cursor.fetchone()[0]
+        if result is None:
+            raise ValueError("Нет комнат для расчета средней стоимости.")
+        return result
+
+    def get_all_rooms(self):
+        self.cursor.execute('SELECT id, price, discount FROM rooms')
+        return self.cursor.fetchall()
+
+    def close(self):
+        self.connection.close()
+
+    def save(self):
+        """Сохранить изменения в текущую базу данных (hotel.db)."""
+        self.connection.commit()
+
+    def save_changes(self):
+        """Метод, который сохраняет изменения в текущий файл."""
+        self.save()
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Управление отелем")
+        self.hotel = Hotel()  # используем существующий файл hotel.db
+
+        self.layout = QVBoxLayout()
+
+        self.room_list = QListWidget()
+        self.layout.addWidget(self.room_list)
+
+        self.add_room_button = QPushButton("Добавить комнату")
+        self.add_room_button.clicked.connect(self.add_room)
+        self.layout.addWidget(self.add_room_button)
+
+        self.calc_average_button = QPushButton("Рассчитать среднюю стоимость")
+        self.calc_average_button.clicked.connect(self.calculate_average)
+        self.layout.addWidget(self.calc_average_button)
+
+        self.load_button = QPushButton("Загрузить комнаты")
+        self.load_button.clicked.connect(self.load_rooms)
+        self.layout.addWidget(self.load_button)
+
+        self.save_button = QPushButton("Сохранить изменения в файл")
+        self.save_button.clicked.connect(self.save_changes)
+        self.layout.addWidget(self.save_button)
+
+        self.output_label = QLabel()
+        self.layout.addWidget(self.output_label)
+
+        container = QWidget()
+        container.setLayout(self.layout)
+        self.setCentralWidget(container)
+
+    def add_room(self):
+        dialog = AddRoomDialog(self.hotel, self.room_list)
+        dialog.exec_()
+
+    def calculate_average(self):
+        try:
+            average_cost = self.hotel.calculate_average_cost()
+            self.output_label.setText(f"Средняя стоимость: {average_cost:.2f}")
+        except ValueError as e:
+            QMessageBox.critical(self, "Ошибка", str(e))
+
+    def load_rooms(self):
+        self.room_list.clear()
+        rooms = self.hotel.get_all_rooms()
+        for room in rooms:
+            self.room_list.addItem(f"ID: {room[0]}, Цена: {room[1]}, Скидка: {room[2]}%")
+
+    def save_changes(self):
+        """Сохранить изменения в файл hotel.db"""
+        try:
+            self.hotel.save_changes()
+            QMessageBox.information(self, "Успех", "Изменения успешно сохранены в файл hotel.db!")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить изменения: {str(e)}")
+
+class AddRoomDialog(QDialog):
+    def __init__(self, hotel, room_list):
+        super().__init__()
+        self.setWindowTitle("Добавить комнату")
+        self.hotel = hotel
+        self.room_list = room_list
+
+        self.layout = QVBoxLayout()
+
+        self.room_id_input = QLineEdit()
+        self.room_id_input.setPlaceholderText("ID комнаты")
+        self.layout.addWidget(QLabel("ID комнаты:"))
+        self.layout.addWidget(self.room_id_input)
+
+        self.price_input = QLineEdit()
+        self.price_input.setPlaceholderText("Цена комнаты")
+        self.layout.addWidget(QLabel("Цена комнаты:"))
+        self.layout.addWidget(self.price_input)
+
+        self.discount_input = QLineEdit()
+        self.discount_input.setPlaceholderText("Скидка (%)")
+        self.layout.addWidget(QLabel("Скидка (%):"))
+        self.layout.addWidget(self.discount_input)
+
+        self.save_button = QPushButton("Сохранить")
+        self.save_button.clicked.connect(self.save_room)
+        self.layout.addWidget(self.save_button)
+
+        self.setLayout(self.layout)
+
+    def save_room(self):
+        try:
+            room_id = int(self.room_id_input.text())
+            price = float(self.price_input.text())
+            discount = float(self.discount_input.text())
+
+            self.hotel.add_room(room_id, price, discount)
+            self.room_list.addItem(f"ID: {room_id}, Цена: {price}, Скидка: {discount}%")
+            self.accept()
+        except ValueError as e:
+            QMessageBox.critical(self, "Ошибка", str(e))
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.resize(600, 400)
+    window.show()
+    sys.exit(app.exec_())
